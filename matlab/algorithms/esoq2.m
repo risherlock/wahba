@@ -70,10 +70,9 @@ function [C, q] = esoq2(vb, vi, w)
   y = -[S; z'] * e; % Eqn.26
   [~, k] = max(abs(x));
   h = sqrt(x(k)^2 + y(k)^2); % Eqn.29
-  sph = x(k);
-  cph = y(k);
+  sph = x(k) / h;
+  cph = y(k) / h;
 
   q = [sph * e', cph]'; % Eqn.16
-  q = q / norm(q);
   C = quaternion_to_dcm(q);
 end
