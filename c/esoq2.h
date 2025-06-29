@@ -6,7 +6,7 @@ typedef struct
   double x;
   double y;
   double z;
-}esoq2_vec_t;
+} esoq2_vec_t;
 
 typedef struct
 {

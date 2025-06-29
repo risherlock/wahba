@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <math.h>
 
 #include "esoq2.h"
@@ -8,6 +7,76 @@ static inline double det_3x3(double m[3][3])
   return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
          m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
          m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+}
+
+// Compute the greatest eigenvalue of symmetric 4x4 matrix
+double get_lambda_max(const double K[4][4], const int n)
+{
+  // Cache unique elements of K
+  const double K00 = K[0][0]; // S00
+  const double K01 = K[0][1]; // S01
+  const double K02 = K[0][2]; // S02
+  const double K03 = K[0][3]; // z0
+  const double K11 = K[1][1]; // S11
+  const double K12 = K[1][2]; // S12
+  const double K13 = K[1][3]; // z1
+  const double K22 = K[2][2]; // S22
+  const double K23 = K[2][3]; // z2
+  const double K33 = K[3][3]; // trB
+
+  // Cache frequently used terms
+  const double K03_sq = K03 * K03;
+  const double K13_sq = K13 * K13;
+  const double K23_sq = K23 * K23;
+  const double K12_sq = K12 * K12;
+  const double K01_sq = K01 * K01;
+  const double K02_sq = K02 * K02;
+
+  // Eqn. 7
+  const double trB = K33;
+  const double tradB = // trace(adj(B + tr(B)))
+      (K11 + trB) * (K22 + trB) - K12_sq +
+      (K00 + trB) * (K22 + trB) - K02_sq +
+      (K00 + trB) * (K11 + trB) - K01_sq;
+  const double b = -2.0f * trB * trB + tradB - (K03_sq + K13_sq + K23_sq);
+
+  // Determinant of symmetric 4x4 matrix
+  const double d =
+      K03_sq * K12_sq - K00 * K33 * K12_sq - 2.0 * K01 * K03 * K23 * K12 +
+      2.0 * K01 * K02 * K33 * K12 + 2.0 * K00 * K23 * K12 * K13 -
+      2.0 * K02 * K03 * K12 * K13 - K11 * K00 * K23_sq + K01_sq * K23_sq +
+      2.0 * K11 * K02 * K03 * K23 - K11 * K02_sq * K33 + K02_sq * K13_sq -
+      2.0 * K01 * K02 * K23 * K13 + K11 * K00 * K33 * K22 - K00 * K13_sq * K22 -
+      K01_sq * K33 * K22 + 2.0 * K01 * K03 * K13 * K22 - K11 * K03_sq * K22;
+
+  double lambda_max = 0.0;
+
+  // Compute maximum eigenvalue based on number of vector pairs
+  if (n == 2)
+  {
+    const double g3 = sqrt(2 * sqrt(d) - b);  // Eqn. 15
+    const double g4 = sqrt(-2 * sqrt(d) - b); // Eqn. 15
+    lambda_max = (g3 + g4) / 2.0f;            // Eqn. 14
+  }
+  else
+  {
+    // trace(adj(K))
+    const double tradK =
+        det_3x3((double[3][3]){{K11, K12, K13}, {K12, K22, K23}, {K13, K23, K33}}) +
+        det_3x3((double[3][3]){{K00, K02, K03}, {K02, K22, K23}, {K03, K23, K33}}) +
+        det_3x3((double[3][3]){{K00, K01, K03}, {K01, K11, K13}, {K03, K13, K33}}) +
+        det_3x3((double[3][3]){{K00, K01, K02}, {K01, K11, K12}, {K02, K12, K22}});
+
+    const double c = -tradK;                                                       //  Eqn. 7
+    const double p = pow(b / 3.0f, 2) + 4.0f * d / 3;                              // Eqn. 10
+    const double q = pow(b / 3.0f, 3) - 4.0f * d * b / 3.0f + c * c / 2.0;         // Eqn. 10
+    const double u1 = 2.0f * sqrt(p) * cos(acos(q / pow(p, 1.5)) / 3.0) + b / 3.0; // Eqn. 9
+    const double g1 = sqrt(u1 - b);                                                // Eqn. 12
+    const double g2 = -2.0f * sqrt(u1 * u1 - 4.0 * d);                             // Eqn. 12
+    lambda_max = 0.5f * (g1 + sqrt(-u1 - b - g2));                                 // Eqn. 13
+  }
+
+  return lambda_max;
 }
 
 quaternion_t esoq2_update(const esoq2_vec_t *vb, const esoq2_vec_t *vi, double *w, const int n)
@@ -29,73 +98,39 @@ quaternion_t esoq2_update(const esoq2_vec_t *vb, const esoq2_vec_t *vi, double *
     B[2][2] += w[i] * vb[i].z * vi[i].z;
   }
 
-  // trace(adj(B + tr(B)))
-  const double tradjB =
-    4 * B[1][1] * B[2][2] - (B[1][2] + B[2][1]) * (B[1][2] + B[2][1]) +
-    4 * B[0][0] * B[2][2] - (B[0][2] + B[2][0]) * (B[0][2] + B[2][0]) +
-    4 * B[0][0] * B[1][1] - (B[0][1] + B[1][0]) * (B[0][1] + B[1][0]);
-
   const double trB = B[0][0] + B[1][1] + B[2][2];
-  const double trB_sq = trB * trB;
   const double z[3] = {B[1][2] - B[2][1], B[2][0] - B[0][2], B[0][1] - B[1][0]};
 
-  // S = B + tr(B) - eye(3) * trB
+  // S = B + B' - I * trB
   double S00 = 2 * B[0][0] - trB;
   double S11 = 2 * B[1][1] - trB;
   double S22 = 2 * B[2][2] - trB;
   const double S01 = B[0][1] + B[1][0];
   const double S02 = B[0][2] + B[2][0];
   const double S12 = B[1][2] + B[2][1];
-  const double z0_sq = z[0] * z[0];
-  const double z1_sq = z[1] * z[1];
-  const double z2_sq = z[2] * z[2];
-  const double S12_sq = S12 * S12;
-  const double S01_sq = S01 * S01;
-  const double S02_sq = S02 * S02;
 
-  // trace(adj(K)) where K = [S, z; tr(z), tr(B)]
-  // const double tradjK =
-  //   det_3x3((double[3][3]){{S11, S12, z[1]}, {S12, S22, z[2]}, {z[1], z[2], trB}}) +
-  //   det_3x3((double[3][3]){{S00, S02, z[0]}, {S02, S22, z[2]}, {z[0], z[2], trB}}) +
-  //   det_3x3((double[3][3]){{S00, S01, S02}, {S01, S11, S12}, {S02, S12, S22}});
+  // Compute largest eigenvalue of K
+  const double K[4][4] = {{S00, S01, S02, z[0]}, {S01, S11, S12, z[1]}, {S02, S12, S22, z[2]}, {z[0], z[1], z[2], trB}};
+  const double lambda = get_lambda_max(K, n);
 
-  // Determinant of 4x4 symmetric matrix K
-  const double detK =
-    z0_sq * S12_sq - S00 * trB * S12_sq - 2 * S01 * z[0] * z[2] * S12 +
-    2 * S01 * S02 * trB * S12 + 2 * S00 * z[2] * S12 * z[1] -
-    2 * S02 * z[0] * S12 * z[1] - S11 * S00 * z2_sq + S01_sq * z2_sq +
-    2 * S11 * S02 * z[0] * z[2] - S11 * S02_sq * trB + S02_sq * z1_sq -
-    2 * S01 * S02 * z[2] * z[1] + S11 * S00 * trB * S22 - S00 * z1_sq * S22 -
-    S01_sq * trB * S22 + 2 * S01 * z[0] * z[1] * S22 - S11 * z0_sq * S22;
-
-  const double b = -2.0f * trB_sq + tradjB - (z[0] * z[0] + z[1] * z[1] + z[2] * z[2]);
-  // const double c = -tradjK;
-  const double d = detK;
-  // const double p = pow(b / 3.0f, 2) * 4.0f * d / 3;
-  // const double q_ = pow(b / 3.0f, 3) - 4.0f * d * b / 3.0f;
-
-  // n == 2
-  const double g3 = sqrt(2 * sqrt(d) - b);
-  const double g4 = sqrt(-2 * sqrt(d) - b);
-  const double lambda = (g3 + g4) / 2.0f;
-
+  // Eqn. 18
   const double t = trB - lambda;
-  S00 -= lambda;
-  S11 -= lambda;
-  S22 -= lambda;
+  S00 = S00 - lambda;
+  S11 = S11 - lambda;
+  S22 = S22 - lambda;
 
-  // Eqn. 20
-  const double ma = S00 * t - z0_sq;
-  const double mb = S11 * t - z1_sq;
-  const double mc = S22 * t - z2_sq;
-  const double mx = S01 * t - z[1] * z[0];
+  // Entries of matrix M in Eqn. 20 computed using Eqn. 19
+  const double ma = S00 * t - z[0] * z[0];
+  const double mb = S11 * t - z[1] * z[1];
+  const double mc = S22 * t - z[2] * z[2];
+  const double mx = S01 * t - z[0] * z[1];
   const double my = S02 * t - z[0] * z[2];
   const double mz = S12 * t - z[1] * z[2];
 
   double e[3] = {mb * mc - mz * mz, ma * mc - my * my, ma * mb - mx * mx};
   double e_abs[3] = {fabs(e[0]), fabs(e[1]), fabs(e[2])};
 
-  // Choose optimal principal axis
+  // Choose optimal principal axis from three choices. Eqn. 21
   if ((e_abs[0] > e_abs[1]) && (e_abs[0] > e_abs[2]))
   {
     e[1] = my * mz - mx * mc;
@@ -112,49 +147,53 @@ quaternion_t esoq2_update(const esoq2_vec_t *vb, const esoq2_vec_t *vi, double *
     e[1] = mx * my - mz * ma;
   }
 
-  const double norm_e = sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
-  e[0] = e[0] / norm_e;
-  e[1] = e[1] / norm_e;
-  e[2] = e[2] / norm_e;
+  // Normalize e
+  const double norm_e_inv = 1.0 / sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+  e[0] *= norm_e_inv;
+  e[1] *= norm_e_inv;
+  e[2] *= norm_e_inv;
 
-  const float abs_z0 = fabs(z[0]);
-  const float abs_z1 = fabs(z[1]);
-  const float abs_z2 = fabs(z[2]);
-  const float abs_t = fabs(t);
+  // Find maximum absolute value among z components and t
+  const double abs_z0 = fabs(z[0]);
+  const double abs_z1 = fabs(z[1]);
+  const double abs_z2 = fabs(z[2]);
+  const double abs_t = fabs(t);
 
   double xk = 0.0;
   double yk = 0.0;
 
-  if((abs_z0 > abs_z1) && (abs_z0 > abs_z2) && (abs_z0 > abs_t))
-	{
+  if ((abs_z0 > abs_z1) && (abs_z0 > abs_z2) && (abs_z0 > abs_t))
+  {
     xk = z[0];
-		yk = S00 * e[0] + S01 * e[1] + S02 * e[2];
-	}
-  else if((abs_z1 > abs_z2) && (abs_z1 > abs_t))
-	{
+    yk = S00 * e[0] + S01 * e[1] + S02 * e[2];
+  }
+  else if ((abs_z1 > abs_z2) && (abs_z1 > abs_t))
+  {
     xk = z[1];
-		yk = S01 * e[0] + S11 * e[1] + S12 * e[2];
-	}
-  else if(abs_z2 > abs_t)
-	{
+    yk = S01 * e[0] + S11 * e[1] + S12 * e[2];
+  }
+  else if (abs_z2 > abs_t)
+  {
     xk = z[2];
-		yk = S02 * e[0] + S12 * e[1] + S22 * e[2];
-	}
+    yk = S02 * e[0] + S12 * e[1] + S22 * e[2];
+  }
   else
-	{
+  {
     xk = t;
-		yk = z[0] * e[0] + z[1] * e[1] + z[2] * e[2];
-	}
+    yk = z[0] * e[0] + z[1] * e[1] + z[2] * e[2];
+  }
 
-  const double  h = sqrt(xk * xk + yk * yk);
-  const double sph = xk / h;
-  const double cph = -yk / h;
+  // Eqn. 28
+  const double h = sqrt(xk * xk + yk * yk);
+  const double h_inv = 1.0 / h;
+  const double sph = xk * h_inv;
+  const double cph = -yk * h_inv;
 
-  quaternion_t q;
-  q.q0 = cph;
-  q.q1 = sph * e[0];
-  q.q2 = sph * e[1];
-  q.q3 = sph * e[2];
+  quaternion_t q_opt;
+  q_opt.q0 = cph;
+  q_opt.q1 = sph * e[0];
+  q_opt.q2 = sph * e[1];
+  q_opt.q3 = sph * e[2];
 
-  return q;
+  return q_opt;
 }
